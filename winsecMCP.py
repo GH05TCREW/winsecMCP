@@ -9,6 +9,17 @@ from typing import Any, Dict, List, Tuple # More specific type hints
 # --- MCP Imports ---
 from mcp.server.fastmcp import FastMCP
 
+# --- Constants for Registry Keys and Paths ---
+# Windows Registry paths used in multiple places
+REG_TERMINAL_SERVER = r'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server'
+REG_TS_RDPTCP = r'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+REG_POLICIES_SYSTEM = r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+REG_NETLOGON = r'HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters'
+REG_DNS_CLIENT = r'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'
+REG_NETBT = r'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters'
+REG_LSA = r'HKLM\SYSTEM\CurrentControlSet\Control\Lsa'
+REG_LANMANSERVER = r'HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+
 # --- Initialize Logging ---
 # Logs output to the console where the server is run.
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -133,7 +144,7 @@ def get_rdp_status() -> Dict[str, Any]:
     logger.info("Checking RDP status...")
     # Check registry key HKLM\...\Terminal Server fDenyTSConnections
     # Value 0 means RDP is allowed (Deny=False), 1 means disallowed (Deny=True)
-    reg_cmd = ['reg', 'query', r'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server', '/v', 'fDenyTSConnections']
+    reg_cmd = ['reg', 'query', REG_TERMINAL_SERVER, '/v', 'fDenyTSConnections']
     reg_result = run_command(reg_cmd)
 
     rdp_allowed_registry = False
@@ -205,11 +216,11 @@ def get_uac_status() -> Dict[str, Any]:
     """
     logger.info("Checking UAC status...")
     # Check primary UAC switch - EnableLUA
-    reg_cmd = ['reg', 'query', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', '/v', 'EnableLUA']
+    reg_cmd = ['reg', 'query', REG_POLICIES_SYSTEM, '/v', 'EnableLUA']
     reg_result = run_command(reg_cmd)
 
     # Also check notification level - ConsentPromptBehaviorAdmin
-    behavior_cmd = ['reg', 'query', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', '/v', 'ConsentPromptBehaviorAdmin']
+    behavior_cmd = ['reg', 'query', REG_POLICIES_SYSTEM, '/v', 'ConsentPromptBehaviorAdmin']
     behavior_result = run_command(behavior_cmd)
 
     uac_enabled = False
@@ -461,7 +472,7 @@ def disable_rdp() -> Dict[str, str]:
         dict: Status dictionary {"status": "success"|"failure", "message": "Details..."}
     """
     logger.info("Attempting to disable RDP...")
-    reg_cmd = ['reg', 'add', r'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server', '/v', 'fDenyTSConnections', '/t', 'REG_DWORD', '/d', '1', '/f']
+    reg_cmd = ['reg', 'add', REG_TERMINAL_SERVER, '/v', 'fDenyTSConnections', '/t', 'REG_DWORD', '/d', '1', '/f']
     fw_cmd = ['netsh', 'advfirewall', 'firewall', 'set', 'rule', 'group="remote desktop"', 'new', 'enable=no']
 
     reg_result = run_command(reg_cmd)
@@ -472,9 +483,9 @@ def disable_rdp() -> Dict[str, str]:
     message += f"Firewall (Disable Rule Group 'remote desktop'): {'Succeeded' if fw_result['returncode'] == 0 else 'Failed/Not Applicable (' + str(fw_result['returncode']) + ')'}."
 
     if not success:
-         message += f" Registry Error: {reg_result['stderr']}"
+         message += f" Registry Error: {reg_result['stderr']} (Command: {' '.join(reg_cmd)})"
     if fw_result["returncode"] != 0:
-         message += f" Firewall Error: {fw_result['stderr']}"
+         message += f" Firewall Error: {fw_result['stderr']} (Command: {' '.join(fw_cmd)})"
 
     status = "success" if success else "failure"
     logger.info(f"Disable RDP Result: {status} - {message}")
@@ -491,9 +502,9 @@ def enable_rdp() -> Dict[str, str]:
         dict: Status dictionary {"status": "success"|"failure", "message": "Details..."}
     """
     logger.info("Attempting to enable RDP (with NLA)...")
-    # Command parts - use raw strings (r"...") for paths with backslashes
-    reg_allow_cmd = ['reg', 'add', r'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server', '/v', 'fDenyTSConnections', '/t', 'REG_DWORD', '/d', '0', '/f']
-    reg_nla_cmd = ['reg', 'add', r'HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp', '/v', 'UserAuthentication', '/t', 'REG_DWORD', '/d', '1', '/f']
+    # Command parts - use registry constants for paths
+    reg_allow_cmd = ['reg', 'add', REG_TERMINAL_SERVER, '/v', 'fDenyTSConnections', '/t', 'REG_DWORD', '/d', '0', '/f']
+    reg_nla_cmd = ['reg', 'add', REG_TS_RDPTCP, '/v', 'UserAuthentication', '/t', 'REG_DWORD', '/d', '1', '/f']
     fw_enable_cmd = ['netsh', 'advfirewall', 'firewall', 'set', 'rule', 'group="remote desktop"', 'new', 'enable=yes']
 
     results = {}
@@ -515,9 +526,12 @@ def enable_rdp() -> Dict[str, str]:
 
     # Append specific errors if any step failed
     all_errors = []
-    if results["allow"]["returncode"] != 0: all_errors.append(f"Allow RDP Err: {results['allow']['stderr']}")
-    if results["nla"]["returncode"] != 0: all_errors.append(f"NLA Err: {results['nla']['stderr']}")
-    if results["firewall"]["returncode"] != 0: all_errors.append(f"Firewall Err: {results['firewall']['stderr']}")
+    if results["allow"]["returncode"] != 0: 
+        all_errors.append(f"Allow RDP Err: {results['allow']['stderr']} (Command: {' '.join(reg_allow_cmd)})")
+    if results["nla"]["returncode"] != 0 and results["nla"]["returncode"] != -10: 
+        all_errors.append(f"NLA Err: {results['nla']['stderr']} (Command: {' '.join(reg_nla_cmd)})")
+    if results["firewall"]["returncode"] != 0 and results["firewall"]["returncode"] != -10: 
+        all_errors.append(f"Firewall Err: {results['firewall']['stderr']} (Command: {' '.join(fw_enable_cmd)})")
     if all_errors: message += " Errors: " + " | ".join(all_errors)
 
     status = "success" if success else "failure" # Base overall success on the main 'allow' step
@@ -563,17 +577,34 @@ def disable_firewall() -> Dict[str, str]:
 def enable_uac() -> Dict[str, str]:
     """
     Enables User Account Control (UAC) by setting the EnableLUA registry key to 1.
+    Also sets a recommended notification level (0x2 - Always notify).
 
     Returns:
         dict: Status dictionary {"status": "success"|"failure", "message": "Details..."}
     """
     logger.info("Attempting to enable UAC (set EnableLUA=1)...")
-    reg_cmd = ['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', '/v', 'EnableLUA', '/t', 'REG_DWORD', '/d', '1', '/f']
+    
+    # Enable UAC
+    reg_cmd = ['reg', 'add', REG_POLICIES_SYSTEM, '/v', 'EnableLUA', '/t', 'REG_DWORD', '/d', '1', '/f']
     reg_result = run_command(reg_cmd)
+    
+    # Set notification level to "Always notify" (most secure)
+    level_cmd = ['reg', 'add', REG_POLICIES_SYSTEM, '/v', 'ConsentPromptBehaviorAdmin', '/t', 'REG_DWORD', '/d', '2', '/f']
+    level_result = run_command(level_cmd)
+    
     success = reg_result["returncode"] == 0
     status = "success" if success else "failure"
-    message = f"Registry Set EnableLUA=1: {'Succeeded' if success else 'Failed (' + str(reg_result['returncode']) + ')'}."
-    if not success: message += f" Error: {reg_result['stderr']}"
+    
+    message = f"Registry Set EnableLUA=1: {'Succeeded' if reg_result['returncode'] == 0 else 'Failed (' + str(reg_result['returncode']) + ')'}. "
+    message += f"Set notification level to 'Always notify': {'Succeeded' if level_result['returncode'] == 0 else 'Failed (' + str(level_result['returncode']) + ')'}."
+    
+    if not success:
+        message += f" UAC Enable Error: {reg_result['stderr']} (Command: {' '.join(reg_cmd)})"
+    if level_result["returncode"] != 0:
+        message += f" Notification Level Error: {level_result['stderr']} (Command: {' '.join(level_cmd)})"
+        
+    message += " A system restart may be required for all UAC changes to take full effect."
+    
     logger.info(f"Enable UAC Result: {status} - {message}")
     return {"status": status, "message": message}
 
@@ -586,13 +617,13 @@ def disable_uac() -> Dict[str, str]:
         dict: Status dictionary {"status": "success"|"failure", "message": "Details..."}
     """
     logger.warning("Attempting to disable UAC (set EnableLUA=0)...")
-    reg_cmd = ['reg', 'add', r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System', '/v', 'EnableLUA', '/t', 'REG_DWORD', '/d', '0', '/f']
+    reg_cmd = ['reg', 'add', REG_POLICIES_SYSTEM, '/v', 'EnableLUA', '/t', 'REG_DWORD', '/d', '0', '/f']
     reg_result = run_command(reg_cmd)
     success = reg_result["returncode"] == 0
     status = "success" if success else "failure"
     message = f"Registry Set EnableLUA=0: {'Succeeded' if success else 'Failed (' + str(reg_result['returncode']) + ')'}."
     if success: message += " A system restart is required for this change to take full effect."
-    else: message += f" Error: {reg_result['stderr']}"
+    else: message += f" Error: {reg_result['stderr']} (Command: {' '.join(reg_cmd)})"
     logger.warning(f"Disable UAC Result: {status} - {message}")
     return {"status": status, "message": message}
 
@@ -655,7 +686,8 @@ def flush_dns_cache() -> Dict[str, str]:
 @mcp.tool()
 def set_password_policy(min_length: int = 10, history_count: int = 24, max_age: int = 60, min_age: int = 1, complexity_enabled: bool = True) -> Dict[str, str]:
     """
-    Configures Windows password policy with customizable settings.
+    Configures Windows password policy with customizable settings using a combination
+    of net accounts and secedit where appropriate.
     
     Args:
         min_length: Minimum password length (recommended 8 or more)
@@ -669,6 +701,7 @@ def set_password_policy(min_length: int = 10, history_count: int = 24, max_age: 
     """
     logger.info(f"Setting password policy: length={min_length}, history={history_count}, max_age={max_age}, min_age={min_age}, complexity={complexity_enabled}")
     
+    # Set basic password policy parameters using net accounts
     # Set minimum password length
     cmd_minpwlen = ['net', 'accounts', f'/minpwlen:{min_length}']
     min_len_result = run_command(cmd_minpwlen)
@@ -685,38 +718,115 @@ def set_password_policy(min_length: int = 10, history_count: int = 24, max_age: 
     cmd_minpwage = ['net', 'accounts', f'/minpwage:{min_age}']
     min_age_result = run_command(cmd_minpwage)
     
-    # Set password complexity via registry
-    # 1 = Enabled, 0 = Disabled
-    complexity_value = '1' if complexity_enabled else '0'
-    cmd_complexity = ['reg', 'add', r'HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters', '/v', 'PasswordComplexity', '/t', 'REG_DWORD', '/d', complexity_value, '/f']
-    complexity_result = run_command(cmd_complexity)
+    # Use secedit to set password complexity
+    # First, we'll try to export current security policy
+    import tempfile
+    import os
+    
+    # Step 1: Create temporary files for the secedit work
+    with tempfile.NamedTemporaryFile(suffix='.cfg', delete=False) as export_file, \
+         tempfile.NamedTemporaryFile(suffix='.inf', delete=False) as import_file:
+        export_path = export_file.name
+        import_path = import_file.name
+    
+    secedit_results = {}
+    
+    try:
+        # Step 2: Export current policy to the temp file
+        cmd_export = ['secedit', '/export', '/cfg', export_path, '/quiet']
+        secedit_results["export"] = run_command(cmd_export)
+        
+        if secedit_results["export"]["returncode"] == 0:
+            # Step 3: Read the exported policy
+            with open(export_path, 'r') as f:
+                policy_content = f.read()
+            
+            # Step 4: Create a new INF file for import
+            complexity_value = '1' if complexity_enabled else '0'
+            inf_content = f"""[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[System Access]
+PasswordComplexity = {complexity_value}
+"""
+            
+            with open(import_path, 'w') as f:
+                f.write(inf_content)
+            
+            # Step 5: Import the modified policy using secedit
+            cmd_import = ['secedit', '/configure', '/db', 'secedit.sdb', '/cfg', import_path, '/quiet']
+            secedit_results["import"] = run_command(cmd_import)
+            
+            # We'll set a registry backup in case secedit fails
+            if secedit_results["import"]["returncode"] != 0:
+                # Fallback to registry if secedit fails
+                complexity_reg_value = '1' if complexity_enabled else '0'
+                cmd_complexity = ['reg', 'add', r'HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters', 
+                                 '/v', 'PasswordComplexity', '/t', 'REG_DWORD', '/d', complexity_reg_value, '/f']
+                secedit_results["reg_fallback"] = run_command(cmd_complexity)
+                
+    except Exception as e:
+        logger.error(f"Error while configuring password complexity: {e}")
+        secedit_results["error"] = {
+            "returncode": -1,
+            "stderr": f"Exception: {str(e)}"
+        }
+        
+        # Fallback to registry on exception
+        complexity_reg_value = '1' if complexity_enabled else '0'
+        cmd_complexity = ['reg', 'add', r'HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters', 
+                         '/v', 'PasswordComplexity', '/t', 'REG_DWORD', '/d', complexity_reg_value, '/f']
+        secedit_results["reg_fallback"] = run_command(cmd_complexity)
+    
+    finally:
+        # Clean up temp files
+        try:
+            if os.path.exists(export_path):
+                os.remove(export_path)
+            if os.path.exists(import_path):
+                os.remove(import_path)
+            if os.path.exists("secedit.sdb"):
+                os.remove("secedit.sdb")
+        except Exception as e:
+            logger.warning(f"Error cleaning up temporary files: {e}")
     
     # Check if all operations were successful
-    all_successful = (
+    net_cmd_successful = (
         min_len_result["returncode"] == 0 and
         history_result["returncode"] == 0 and
         max_age_result["returncode"] == 0 and
-        min_age_result["returncode"] == 0 and
-        complexity_result["returncode"] == 0
+        min_age_result["returncode"] == 0
     )
     
-    status = "success" if all_successful else "failure"
+    complexity_successful = (
+        secedit_results.get("import", {"returncode": -1})["returncode"] == 0 or
+        secedit_results.get("reg_fallback", {"returncode": -1})["returncode"] == 0
+    )
+    
+    status = "success" if net_cmd_successful and complexity_successful else "failure"
     
     # Compile results into a message
     message = f"Password policy set: Length={min_length}, History={history_count}, Max Age={max_age}, Min Age={min_age}, Complexity={'Enabled' if complexity_enabled else 'Disabled'}"
     
-    if not all_successful:
+    if not net_cmd_successful or not complexity_successful:
         message += "\nErrors encountered: "
         if min_len_result["returncode"] != 0:
-            message += f"Min Length: {min_len_result['stderr']} | "
+            message += f"Min Length: {min_len_result['stderr']} (Command: {' '.join(cmd_minpwlen)}) | "
         if history_result["returncode"] != 0:
-            message += f"History: {history_result['stderr']} | "
+            message += f"History: {history_result['stderr']} (Command: {' '.join(cmd_uniquepw)}) | "
         if max_age_result["returncode"] != 0:
-            message += f"Max Age: {max_age_result['stderr']} | "
+            message += f"Max Age: {max_age_result['stderr']} (Command: {' '.join(cmd_maxpwage)}) | "
         if min_age_result["returncode"] != 0:
-            message += f"Min Age: {min_age_result['stderr']} | "
-        if complexity_result["returncode"] != 0:
-            message += f"Complexity: {complexity_result['stderr']}"
+            message += f"Min Age: {min_age_result['stderr']} (Command: {' '.join(cmd_minpwage)}) | "
+        
+        # Complexity error details
+        if not complexity_successful:
+            if secedit_results.get("import", {"returncode": -1})["returncode"] != 0:
+                message += f"Complexity (secedit): {secedit_results.get('import', {}).get('stderr', 'Unknown error')} | "
+            if secedit_results.get("reg_fallback", {"returncode": -1})["returncode"] != 0:
+                message += f"Complexity (registry fallback): {secedit_results.get('reg_fallback', {}).get('stderr', 'Unknown error')}"
     
     logger.info(f"Set password policy: {status} - {message}")
     return {"status": status, "message": message}
@@ -1011,9 +1121,42 @@ def manage_windows_service(service_name: str, action: str = "status", startup_ty
         results["stop"] = stop_result
         all_successful = all_successful and (stop_result["returncode"] == 0)
         
-        # Wait a moment for the service to stop
+        # Wait for the service to stop completely - poll the status
         import time
-        time.sleep(2)
+        max_wait_seconds = 30
+        wait_interval = 1
+        total_waited = 0
+        service_stopped = False
+        
+        logger.info(f"Waiting for service {service_name} to stop...")
+        
+        while total_waited < max_wait_seconds and not service_stopped:
+            # Check service status
+            status_cmd = ['sc', 'query', service_name]
+            status_result = run_command(status_cmd)
+            
+            # Check if the service is stopped
+            if "STOPPED" in status_result["stdout"]:
+                service_stopped = True
+                logger.info(f"Service {service_name} has stopped successfully after {total_waited} seconds")
+                break
+            
+            # Wait and increment counter
+            time.sleep(wait_interval)
+            total_waited += wait_interval
+        
+        if not service_stopped:
+            logger.warning(f"Service {service_name} did not stop within {max_wait_seconds} seconds")
+            results["stop_wait"] = {
+                "returncode": -1,
+                "stderr": f"Service did not stop within {max_wait_seconds} seconds"
+            }
+            all_successful = False
+        else:
+            results["stop_wait"] = {
+                "returncode": 0,
+                "stderr": ""
+            }
         
         # Then start it
         cmd_action = ['sc', 'start', service_name]
@@ -1044,6 +1187,7 @@ def manage_windows_service(service_name: str, action: str = "status", startup_ty
     # Action result
     if action == "restart":
         message += f"\nStop: {'Success' if results.get('stop', {}).get('returncode', 1) == 0 else 'Failed'}"
+        message += f"\nWait for stop: {'Success' if results.get('stop_wait', {}).get('returncode', 1) == 0 else 'Failed or timed out'}"
         message += f"\nStart: {'Success' if results.get('action', {}).get('returncode', 1) == 0 else 'Failed'}"
     else:
         message += f"\n{action.capitalize()}: {'Success' if results.get('action', {}).get('returncode', 1) == 0 else 'Failed'}"
@@ -1057,7 +1201,7 @@ def manage_windows_service(service_name: str, action: str = "status", startup_ty
         message += "\nErrors encountered: "
         for key, result in results.items():
             if key != "query" and result["returncode"] != 0:
-                message += f"{key}: {result['stderr']} | "
+                message += f"{key}: {result['stderr']} (Command: {' '.join(['sc', key.split('_')[0], service_name])}) | "
     
     logger.info(f"Managed service {service_name}: {status} - {message}")
     return {"status": status, "message": message}
@@ -1065,8 +1209,8 @@ def manage_windows_service(service_name: str, action: str = "status", startup_ty
 @mcp.tool()
 def harden_insecure_services() -> Dict[str, str]:
     """
-    Secures multiple potentially insecure Windows services by disabling them.
-    Handles commonly exploited services like Telnet, TFTP, FTP, Remote Registry, etc.
+    Secures potentially insecure Windows services by disabling them.
+    Only targets genuinely insecure services, avoiding essential system services.
     
     Returns:
         dict: Status dictionary {"status": "success"|"failure", "message": "Details..."}
@@ -1074,32 +1218,40 @@ def harden_insecure_services() -> Dict[str, str]:
     logger.info("Starting bulk service hardening process")
     
     # List of potentially dangerous services to disable
+    # REVISED: Removed essential Windows services that could break system functionality
     dangerous_services = [
         "TlntSvr",           # Telnet Server
         "FTPSVC",            # FTP Server
         "SMTPSVC",           # SMTP Server
         "SNMPTRAP",          # SNMP Trap Service
-        "RemoteRegistry",    # Remote Registry
-        "RpcSs",             # Remote Procedure Call
-        "UPnPHost",          # UPnP Device Host
-        "SSDPSRV",           # SSDP Discovery Service
-        "SharedAccess",      # Internet Connection Sharing
-        "ShellHWDetection",  # Shell Hardware Detection
-        "TrkWks",            # Distributed Link Tracking Client
-        "WebClient",         # WebClient service
-        "Fax",               # Fax service
-        "iPod Service",      # iPod Service
-        "WinRM",             # Windows Remote Management
-        "wercplsupport",     # Problem Reports and Solutions Control Panel
-        "Netlogon"           # NetLogon (If not in domain)
+        "RemoteRegistry",    # Remote Registry - Can be used for lateral movement
+        "UPnPHost",          # UPnP Device Host - Can be used for NAT traversal attacks
+        "SSDPSRV",           # SSDP Discovery Service - Related to UPnP
+        "WebClient",         # WebClient service - WebDAV client that can introduce vulnerabilities
+        "Fax",               # Fax service - Rarely used in modern environments
+        "iPod Service",      # iPod Service - Unnecessary on servers/most workstations
+        "lmhosts"            # Link-Local Multicast Name Resolution - Can be exploited
+    ]
+    
+    # Conditionally dangerous services - only check and suggest disabling these
+    conditional_services = [
+        "WinRM",             # Windows Remote Management - Essential for remote management but can be a vector
+        "NetlogonI",         # NetLogon - Essential for domain-joined systems
+        "SharedAccess",      # Internet Connection Sharing - Only needed if sharing connections
+        "TrkWks",            # Distributed Link Tracking Client - Useful but not critical 
+        "wercplsupport"      # Problem Reports and Solutions Control Panel - Diagnostic service
     ]
     
     results = {}
     success_count = 0
     already_disabled_count = 0
+    skipped_count = 0
     error_count = 0
     
-    for service in dangerous_services:
+    # Function to process a service
+    def process_service(service, force_disable=True):
+        nonlocal success_count, already_disabled_count, skipped_count, error_count
+        
         # First check if service exists
         cmd_query = ['sc', 'query', service]
         query_result = run_command(cmd_query)
@@ -1110,7 +1262,8 @@ def harden_insecure_services() -> Dict[str, str]:
                 "status": "skipped",
                 "reason": "Service not found or inaccessible"
             }
-            continue
+            skipped_count += 1
+            return
         
         # Check if service is already disabled
         config_query = ['sc', 'qc', service]
@@ -1122,7 +1275,27 @@ def harden_insecure_services() -> Dict[str, str]:
                 "reason": "Service was already set to disabled"
             }
             already_disabled_count += 1
-            continue
+            return
+        
+        # If we're not forcing disable (for conditional services), just report
+        if not force_disable:
+            # Check if it's running
+            is_running = "RUNNING" in query_result["stdout"]
+            startup_type = "unknown"
+            
+            if "AUTO_START" in config_result["stdout"]:
+                startup_type = "automatic"
+            elif "DEMAND_START" in config_result["stdout"]:
+                startup_type = "manual"
+                
+            results[service] = {
+                "status": "suggested",
+                "running": is_running,
+                "startup": startup_type,
+                "reason": "Potentially dangerous service but may be required - review manually"
+            }
+            skipped_count += 1
+            return
         
         # First stop the service
         stop_cmd = ['sc', 'stop', service]
@@ -1135,26 +1308,38 @@ def harden_insecure_services() -> Dict[str, str]:
         if disable_result["returncode"] == 0:
             results[service] = {
                 "status": "success",
-                "details": "Service stopped and disabled successfully"
+                "details": f"Service stopped and disabled successfully (Command: {' '.join(disable_cmd)})"
             }
             success_count += 1
         else:
             results[service] = {
                 "status": "error",
-                "details": f"Failed to disable: {disable_result['stderr']}"
+                "details": f"Failed to disable: {disable_result['stderr']} (Command: {' '.join(disable_cmd)})"
             }
             error_count += 1
+    
+    # Process definitely dangerous services
+    for service in dangerous_services:
+        process_service(service, force_disable=True)
+    
+    # Process conditionally dangerous services
+    for service in conditional_services:
+        process_service(service, force_disable=False)
     
     # Format the results message
     message = f"Service hardening results:\n"
     message += f"• Successfully disabled: {success_count} services\n"
     message += f"• Already disabled: {already_disabled_count} services\n"
+    message += f"• Suggested for review: {sum(1 for s, r in results.items() if r.get('status') == 'suggested')} services\n"
+    message += f"• Skipped or not found: {skipped_count - sum(1 for s, r in results.items() if r.get('status') == 'suggested')} services\n"
     message += f"• Errors encountered: {error_count} services\n\n"
     
     # Add detailed results for each service
     message += "Detailed results:\n"
     for service, result in results.items():
         message += f"{service}: {result['status']}"
+        if result['status'] == "suggested":
+            message += f" (Running: {result.get('running', False)}, Startup: {result.get('startup', 'unknown')})"
         if "reason" in result:
             message += f" - {result['reason']}"
         elif "details" in result:
@@ -1163,121 +1348,8 @@ def harden_insecure_services() -> Dict[str, str]:
     
     status = "success" if error_count == 0 else "partial" if success_count > 0 else "failure"
     
-    logger.info(f"Bulk service hardening completed: {status} - Disabled: {success_count}, Already disabled: {already_disabled_count}, Errors: {error_count}")
+    logger.info(f"Bulk service hardening completed: {status} - Disabled: {success_count}, Already disabled: {already_disabled_count}, Suggested: {sum(1 for s, r in results.items() if r.get('status') == 'suggested')}, Skipped: {skipped_count - sum(1 for s, r in results.items() if r.get('status') == 'suggested')}, Errors: {error_count}")
     return {"status": status, "message": message}
-
-# --- Helper functions for security checks ---
-
-def check_password_policy() -> Dict[str, Any]:
-    """
-    Checks the current password policy settings without changing them.
-    
-    Returns:
-        dict: Current password policy settings
-    """
-    logger.info("Checking password policy...")
-    
-    # Get current password policy
-    cmd = ['net', 'accounts']
-    result = run_command(cmd)
-    
-    # Default values
-    policy = {
-        "min_length": 0,
-        "history_count": 0,
-        "max_age": 0,
-        "min_age": 0,
-        "complexity_enabled": False
-    }
-    
-    if result["returncode"] == 0:
-        # Parse min length
-        min_length_match = re.search(r"Minimum password length\s+:\s+(\d+)", result["stdout"])
-        if min_length_match:
-            policy["min_length"] = int(min_length_match.group(1))
-        
-        # Parse history count
-        history_match = re.search(r"Length of password history maintained\s+:\s+(\d+)", result["stdout"])
-        if history_match:
-            policy["history_count"] = int(history_match.group(1))
-        
-        # Parse max age
-        max_age_match = re.search(r"Maximum password age \(days\)\s+:\s+(\d+)", result["stdout"])
-        if max_age_match:
-            policy["max_age"] = int(max_age_match.group(1))
-        
-        # Parse min age
-        min_age_match = re.search(r"Minimum password age \(days\)\s+:\s+(\d+)", result["stdout"])
-        if min_age_match:
-            policy["min_age"] = int(min_age_match.group(1))
-    
-    # Check for password complexity
-    reg_cmd = ['reg', 'query', r'HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters', '/v', 'PasswordComplexity']
-    reg_result = run_command(reg_cmd)
-    if reg_result["returncode"] == 0 and "0x1" in reg_result["stdout"]:
-        policy["complexity_enabled"] = True
-    
-    # Alternative check for domain machines using SecEdit
-    if not policy["complexity_enabled"]:
-        complexity_cmd = ['secedit', '/export', '/cfg', 'secpol.cfg', '/quiet']
-        run_command(complexity_cmd)
-        
-        try:
-            with open('secpol.cfg', 'r') as f:
-                secpol_content = f.read()
-                if 'PasswordComplexity = 1' in secpol_content:
-                    policy["complexity_enabled"] = True
-                    
-            # Clean up
-            import os
-            if os.path.exists('secpol.cfg'):
-                os.remove('secpol.cfg')
-        except:
-            logger.warning("Could not check password complexity via SecEdit")
-    
-    logger.info(f"Password policy check completed: {policy}")
-    return policy
-
-
-def check_account_lockout() -> Dict[str, Any]:
-    """
-    Checks the current account lockout policy settings without changing them.
-    
-    Returns:
-        dict: Current account lockout policy settings
-    """
-    logger.info("Checking account lockout policy...")
-    
-    # Get current lockout policy
-    cmd = ['net', 'accounts']
-    result = run_command(cmd)
-    
-    # Default values
-    policy = {
-        "threshold": 0,
-        "duration": 0,
-        "reset_count": 0
-    }
-    
-    if result["returncode"] == 0:
-        # Parse lockout threshold
-        threshold_match = re.search(r"Lockout threshold\s+:\s+(\d+)", result["stdout"])
-        if threshold_match:
-            policy["threshold"] = int(threshold_match.group(1))
-        
-        # Parse lockout duration
-        duration_match = re.search(r"Lockout duration \(minutes\)\s+:\s+(\d+)", result["stdout"])
-        if duration_match:
-            policy["duration"] = int(duration_match.group(1))
-        
-        # Parse reset count
-        reset_match = re.search(r"Lockout observation window \(minutes\)\s+:\s+(\d+)", result["stdout"])
-        if reset_match:
-            policy["reset_count"] = int(reset_match.group(1))
-    
-    logger.info(f"Account lockout policy check completed: {policy}")
-    return policy
-
 
 def check_insecure_services() -> Dict[str, Dict[str, Any]]:
     """
@@ -1289,13 +1361,14 @@ def check_insecure_services() -> Dict[str, Dict[str, Any]]:
     logger.info("Checking for insecure services...")
     
     # List of potentially dangerous services to check
+    # REVISED: Aligned with the harden_insecure_services function to be consistent
     dangerous_services = {
         "TlntSvr": "Telnet Server",
         "FTPSVC": "FTP Server",
         "SMTPSVC": "SMTP Server",
         "SNMPTRAP": "SNMP Trap Service",
         "RemoteRegistry": "Remote Registry",
-        "UPnPHost": "UPnP Device Host",
+        "UPnPHost": "UPnP Device Host", 
         "SSDPSRV": "SSDP Discovery Service",
         "WebClient": "WebClient service",
         "Fax": "Fax service",
@@ -1342,6 +1415,142 @@ def check_insecure_services() -> Dict[str, Dict[str, Any]]:
     logger.info(f"Insecure services check completed: Found {sum(1 for s in results.values() if s['found'])} services")
     return results
 
+# --- Helper functions for security checks ---
+
+def check_password_policy() -> Dict[str, Any]:
+    """
+    Checks the current password policy settings without changing them.
+    Uses both net accounts and secedit for comprehensive checking.
+    
+    Returns:
+        dict: Current password policy settings
+    """
+    logger.info("Checking password policy...")
+    
+    # Get current password policy
+    cmd = ['net', 'accounts']
+    result = run_command(cmd)
+    
+    # Default values
+    policy = {
+        "min_length": 0,
+        "history_count": 0,
+        "max_age": 0,
+        "min_age": 0,
+        "complexity_enabled": False
+    }
+    
+    if result["returncode"] == 0:
+        # Parse min length
+        min_length_match = re.search(r"Minimum password length\s+:\s+(\d+)", result["stdout"])
+        if min_length_match:
+            policy["min_length"] = int(min_length_match.group(1))
+        
+        # Parse history count
+        history_match = re.search(r"Length of password history maintained\s+:\s+(\d+)", result["stdout"])
+        if history_match:
+            policy["history_count"] = int(history_match.group(1))
+        
+        # Parse max age
+        max_age_match = re.search(r"Maximum password age \(days\)\s+:\s+(\d+)", result["stdout"])
+        if max_age_match:
+            policy["max_age"] = int(max_age_match.group(1))
+        
+        # Parse min age
+        min_age_match = re.search(r"Minimum password age \(days\)\s+:\s+(\d+)", result["stdout"])
+        if min_age_match:
+            policy["min_age"] = int(min_age_match.group(1))
+    
+    # Use secedit to check for password complexity - more authoritative
+    import tempfile
+    import os
+    
+    complexity_checked = False
+    
+    # Create a temporary file to store the exported security policy
+    with tempfile.NamedTemporaryFile(suffix='.cfg', delete=False) as temp_file:
+        temp_path = temp_file.name
+    
+    try:
+        # Export the current security policy
+        export_cmd = ['secedit', '/export', '/cfg', temp_path, '/quiet']
+        export_result = run_command(export_cmd)
+        
+        if export_result["returncode"] == 0:
+            # Read the exported policy file
+            with open(temp_path, 'r') as f:
+                policy_content = f.read()
+                
+            # Look for the PasswordComplexity setting
+            complexity_match = re.search(r"PasswordComplexity\s*=\s*(\d+)", policy_content)
+            if complexity_match:
+                policy["complexity_enabled"] = complexity_match.group(1) == "1"
+                complexity_checked = True
+    except Exception as e:
+        logger.warning(f"Error checking password complexity via secedit: {e}")
+    finally:
+        # Clean up the temporary file
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception as e:
+            logger.warning(f"Error removing temporary file: {e}")
+    
+    # If secedit check failed, try registry check as fallback
+    if not complexity_checked:
+        reg_cmd = ['reg', 'query', r'HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters', '/v', 'PasswordComplexity']
+        reg_result = run_command(reg_cmd)
+        if reg_result["returncode"] == 0 and "0x1" in reg_result["stdout"]:
+            policy["complexity_enabled"] = True
+            complexity_checked = True
+    
+    # If both primary methods failed, add a note about that
+    if not complexity_checked:
+        policy["complexity_note"] = "Could not determine password complexity setting"
+    
+    logger.info(f"Password policy check completed: {policy}")
+    return policy
+
+
+def check_account_lockout() -> Dict[str, Any]:
+    """
+    Checks the current account lockout policy settings without changing them.
+    
+    Returns:
+        dict: Current account lockout policy settings
+    """
+    logger.info("Checking account lockout policy...")
+    
+    # Get current lockout policy
+    cmd = ['net', 'accounts']
+    result = run_command(cmd)
+    
+    # Default values
+    policy = {
+        "threshold": 0,
+        "duration": 0,
+        "reset_count": 0
+    }
+    
+    if result["returncode"] == 0:
+        # Parse lockout threshold
+        threshold_match = re.search(r"Lockout threshold\s+:\s+(\d+)", result["stdout"])
+        if threshold_match:
+            policy["threshold"] = int(threshold_match.group(1))
+        
+        # Parse lockout duration
+        duration_match = re.search(r"Lockout duration \(minutes\)\s+:\s+(\d+)", result["stdout"])
+        if duration_match:
+            policy["duration"] = int(duration_match.group(1))
+        
+        # Parse reset count
+        reset_match = re.search(r"Lockout observation window \(minutes\)\s+:\s+(\d+)", result["stdout"])
+        if reset_match:
+            policy["reset_count"] = int(reset_match.group(1))
+    
+    logger.info(f"Account lockout policy check completed: {policy}")
+    return policy
+
 
 def check_network_security() -> Dict[str, Dict[str, Any]]:
     """
@@ -1356,7 +1565,7 @@ def check_network_security() -> Dict[str, Dict[str, Any]]:
     
     # Check SMBv1 status - Check multiple methods
     # Method 1: Check registry key
-    smb1_reg_cmd = ['reg', 'query', r'HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters', '/v', 'SMB1']
+    smb1_reg_cmd = ['reg', 'query', REG_LANMANSERVER, '/v', 'SMB1']
     smb1_reg_result = run_command(smb1_reg_cmd)
     
     # Method 2: Check Windows Feature status using PowerShell
@@ -1379,7 +1588,7 @@ def check_network_security() -> Dict[str, Dict[str, Any]]:
             results["SMBv1"]["secure"] = value_match.group(1).lower() == "0x0"
     
     # Check if LLMNR is disabled (Link-Local Multicast Name Resolution)
-    llmnr_cmd = ['reg', 'query', r'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient', '/v', 'EnableMulticast']
+    llmnr_cmd = ['reg', 'query', REG_DNS_CLIENT, '/v', 'EnableMulticast']
     llmnr_result = run_command(llmnr_cmd)
     
     results["LLMNR"] = {
@@ -1394,7 +1603,7 @@ def check_network_security() -> Dict[str, Dict[str, Any]]:
             results["LLMNR"]["secure"] = value_match.group(1).lower() == "0x0"
     
     # Check if NetBIOS is disabled
-    netbios_cmd = ['reg', 'query', r'HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters', '/v', 'NetbiosOptions']
+    netbios_cmd = ['reg', 'query', REG_NETBT, '/v', 'NetbiosOptions']
     netbios_result = run_command(netbios_cmd)
     
     results["NetBIOS"] = {
@@ -1409,7 +1618,7 @@ def check_network_security() -> Dict[str, Dict[str, Any]]:
             results["NetBIOS"]["secure"] = value_match.group(1).lower() == "0x2"
     
     # Check NTLM security settings
-    ntlm_cmd = ['reg', 'query', r'HKLM\SYSTEM\CurrentControlSet\Control\Lsa', '/v', 'LmCompatibilityLevel']
+    ntlm_cmd = ['reg', 'query', REG_LSA, '/v', 'LmCompatibilityLevel']
     ntlm_result = run_command(ntlm_cmd)
     
     results["NTLM"] = {
