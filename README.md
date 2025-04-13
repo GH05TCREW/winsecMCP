@@ -11,15 +11,15 @@ winsecMCP is a Python-based MCP server with Claude for client that helps adminis
 
 ## Requirements
 
-- Windows operating system
-- Python 3.6+
+- Windows OS
+- Python 3.10+
 - Administrator privileges (for most operations)
 - Required Python packages:
   - mcp
 
 ## Usage
 
-Run the script with administrator privileges:
+Run the script with administrator privileges and start Claude client:
 
 ```powershell
 python winsecMCP.py
