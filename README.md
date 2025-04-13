@@ -20,7 +20,6 @@ winsecMCP is a Python-based security tool that helps administrators automate Win
 - Administrator privileges (for most operations)
 - Required Python packages:
   - mcp (MCP for the agent interface)
-  - asyncio
 
 ## Usage
 

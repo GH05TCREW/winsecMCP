@@ -1,6 +1,5 @@
 # filename: winsecMCP.py
 # --- Imports ---
-import asyncio
 import subprocess
 import re
 import logging
