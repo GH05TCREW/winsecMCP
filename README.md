@@ -1,10 +1,6 @@
-# Windows Security MCP (winsecMCP)
-
-An AI-powered agent for automating Windows security hardening tasks.
-
 ## Overview
 
-winsecMCP is a Python-based security tool that helps administrators automate Windows security configuration. It provides a set of tools to check and modify security settings including:
+winsecMCP is a Python-based MCP server with Claude for client that helps administrators automate Windows security configuration. It provides a set of tools to check and modify security settings including:
 
 - Firewall configuration
 - Remote Desktop Protocol (RDP) settings
@@ -19,7 +15,7 @@ winsecMCP is a Python-based security tool that helps administrators automate Win
 - Python 3.6+
 - Administrator privileges (for most operations)
 - Required Python packages:
-  - mcp (MCP for the agent interface)
+  - mcp
 
 ## Usage
 
