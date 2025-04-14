@@ -25,6 +25,20 @@ Run the script with administrator privileges and start Claude client:
 python winsecMCP.py
 ```
 
+Make sure to add this to your `claude_desktop_config.json` file:
+
+```json
+{
+  "mcpServers": {
+    "windows_hardening_agent": {
+      "command": "python",
+      "args": [
+        "C:\\Path\\to\\hardening_server.py"
+      ]
+    }
+  }
+}
+
 ## Features
 
 ### Information Gathering
