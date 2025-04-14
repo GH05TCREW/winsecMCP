@@ -38,6 +38,7 @@ Make sure to add this to your `claude_desktop_config.json` file:
     }
   }
 }
+```
 
 ## Features
 
